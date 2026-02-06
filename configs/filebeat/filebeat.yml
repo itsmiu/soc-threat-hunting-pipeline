@@ -1,0 +1,33 @@
+# Filebeat Configuration
+# Purpose: Ship Suricata logs to Logstash reliably
+
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/suricata/eve.json
+    json.keys_under_root: true
+    json.add_error_key: true
+    fields:
+      log_source: suricata
+      environment: lab
+
+# Output to Logstash (not directly to Elasticsearch)
+output.logstash:
+  hosts: ["172.20.0.4:5044"]
+  
+# Disable Elasticsearch output (we're using Logstash)
+output.elasticsearch:
+  enabled: false
+
+# Logging configuration
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644
+
+# Registry file (tracks read position)
+filebeat.registry.path: /usr/share/filebeat/data/registry

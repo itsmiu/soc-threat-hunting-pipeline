@@ -1,0 +1,31 @@
+# =============================================================================
+# SOC Threat Hunting Lab - Combined Detection Rules
+# Author: Imam Uddin Mohammed
+# Date: 2026-02-05
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Hunt 1: DNS Tunneling Detection (T1071.004)
+# -----------------------------------------------------------------------------
+
+alert dns any any -> any 53 (msg:"HUNT: Potential DNS Tunneling - Long Subdomain Detected"; dns.query; content:"."; pcre:"/^[a-zA-Z0-9\-]{50,}\./"; threshold: type threshold, track by_src, count 10, seconds 60; metadata: mitre_tactic Command_and_Control, mitre_technique T1071.004; classtype:policy-violation; sid:1000001; rev:1;)
+
+alert dns any any -> any 53 (msg:"HUNT: Potential DNS Tunneling - High Entropy Subdomain"; dns.query; pcre:"/^[A-Za-z0-9+\/=]{30,}\./"; threshold: type threshold, track by_src, count 20, seconds 60; metadata: mitre_tactic Command_and_Control, mitre_technique T1071.004; classtype:policy-violation; sid:1000002; rev:1;)
+
+alert dns any any -> any 53 (msg:"HUNT: Excessive DNS Queries to Single Domain"; dns.query; content:"."; threshold: type threshold, track by_dst, count 50, seconds 60; metadata: mitre_tactic Command_and_Control, mitre_technique T1071.004; classtype:policy-violation; sid:1000003; rev:1;)
+
+# -----------------------------------------------------------------------------
+# Hunt 2: Port Scan Detection (T1046)
+# -----------------------------------------------------------------------------
+
+alert tcp any any -> any any (msg:"HUNT: Possible Port Scan - High Connection Rate"; flags:S; threshold: type threshold, track by_src, count 50, seconds 60; metadata: mitre_tactic Discovery, mitre_technique T1046; classtype:attempted-recon; sid:1000011; rev:1;)
+
+alert tcp any any -> any any (msg:"HUNT: Possible Port Scan - Multiple Ports Targeted"; flags:S; threshold: type both, track by_src, count 20, seconds 30; metadata: mitre_tactic Discovery, mitre_technique T1046; classtype:attempted-recon; sid:1000012; rev:1;)
+
+# -----------------------------------------------------------------------------
+# Hunt 3: SSH Brute Force Detection (T1110.001)
+# -----------------------------------------------------------------------------
+
+alert tcp any any -> any 22 (msg:"HUNT: Possible SSH Brute Force - High Connection Rate"; flags:S; threshold: type threshold, track by_src, count 20, seconds 60; metadata: mitre_tactic Initial_Access, mitre_technique T1110.001; classtype:attempted-user; sid:1000021; rev:1;)
+
+alert tcp any any -> any 22 (msg:"HUNT: Possible SSH Brute Force - Sustained Attack"; flow:to_server; threshold: type both, track by_src, count 10, seconds 30; metadata: mitre_tactic Credential_Access, mitre_technique T1110.001; classtype:attempted-user; sid:1000022; rev:1;)

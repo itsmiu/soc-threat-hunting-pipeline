@@ -1,0 +1,165 @@
+# =============================================================================
+# SOC THREAT HUNTING LAB - DOCKER COMPOSE CONFIGURATION
+# =============================================================================
+
+networks:
+  soc_lab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  elasticsearch_data:
+    driver: local
+  suricata_logs:
+    driver: local
+
+services:
+  # ===========================================================================
+  # ELASTICSEARCH
+  # ===========================================================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: soc-elasticsearch
+    environment:
+      - node.name=elasticsearch
+      - cluster.name=soc-cluster
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=SOC_Lab_2025!Secure
+      - xpack.security.enabled=true
+      - xpack.security.enrollment.enabled=false
+      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      soc_lab:
+        ipv4_address: 172.20.0.2
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -u 'elastic:SOC_Lab_2025!Secure' http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ===========================================================================
+  # KIBANA
+  # ===========================================================================
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: soc-kibana
+    environment:
+      - SERVERNAME=kibana
+      - ELASTICSEARCH_HOSTS=http://172.20.0.2:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=SOC_Lab_2025!Secure
+      - ELASTICSEARCH_SSL_VERIFICATIONMODE=none
+      - XPACK_SECURITY_ENABLED=true
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=a7f3d2e8c1b9a0f6e4d3c2b1a9f8e7d6c5b4a3f2e1
+    ports:
+      - "5601:5601"
+    networks:
+      soc_lab:
+        ipv4_address: 172.20.0.3
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ===========================================================================
+  # LOGSTASH
+  # ===========================================================================
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.12.0
+    container_name: soc-logstash
+    environment:
+      - LS_JAVA_OPTS=-Xms1g -Xmx1g
+      - xpack.monitoring.enabled=false
+    volumes:
+      - ./configs/logstash/pipelines/suricata-pipeline.conf:/usr/share/logstash/pipeline/suricata-pipeline.conf:ro
+      - ./configs/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml
+    ports:
+      - "5044:5044"
+      - "9600:9600"
+    networks:
+      soc_lab:
+        ipv4_address: 172.20.0.4
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+# ===========================================================================
+  # SURICATA
+  # ===========================================================================
+  suricata:
+    image: jasonish/suricata:latest
+    container_name: soc-suricata
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+    volumes:
+      - ./configs/suricata/suricata.yaml:/etc/suricata/suricata.yaml
+      - ./detection-rules/suricata:/etc/suricata/rules
+      - suricata_logs:/var/log/suricata
+    command: ["-c", "/etc/suricata/suricata.yaml", "-i", "br-77ebaaab6667", "-S", "/etc/suricata/rules/all-rules.rules", "-v"]
+
+  # ===========================================================================
+  # FILEBEAT
+  # ===========================================================================
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.12.0
+    container_name: soc-filebeat
+    user: root
+    volumes:
+      - ./configs/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - suricata_logs:/var/log/suricata:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: filebeat -e -strict.perms=false
+    networks:
+      - soc_lab
+    depends_on:
+      - logstash
+      - suricata
+
+  # ===========================================================================
+  # UBUNTU TARGET
+  # ===========================================================================
+  ubuntu_target:
+    image: ubuntu:22.04
+    container_name: soc-target
+    networks:
+      soc_lab:
+        ipv4_address: 172.20.0.20
+    command: >
+      bash -c "
+        apt-get update && 
+        DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server apache2 dnsutils curl netcat-traditional &&
+        mkdir -p /run/sshd &&
+        echo 'root:password' | chpasswd &&
+        sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config &&
+        service apache2 start &&
+        /usr/sbin/sshd -D
+      "
+    ports:
+      - "2222:22"
+      - "8080:80"
+    stdin_open: true
+    tty: true
+
